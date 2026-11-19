@@ -1,0 +1,16 @@
+*.o
+*.a
+*.so
+*.out
+nat-engine
+natctl
+build/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

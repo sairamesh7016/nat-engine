@@ -1,0 +1,303 @@
+---
+
+STATEFUL IPv4 NAT ENGINE — PROJECT REQUIREMENTS
+
+---
+
+1. TITLE
+
+Stateful IPv4 NAT Engine
+A userspace IPv4 Network Address Translator with full connection tracking, TCP/UDP/ICMP state machines, fragmentation handling, and a Python test harness with correctness checks and telemetry.
+
+---
+
+2. PROBLEM IT SOLVES
+
+NAT is the canonical "systems + networking" problem. It exercises every C systems skill: hash tables, state machines, timers, memory management, pointer arithmetic, and checksum math. It's harder than it looks — port collisions, TCP sequence handling, ICMP ID mapping, fragmentation across NAT boundaries, and TIME_WAIT aging are the parts that separate a toy from a real implementation.
+
+This project proves you can build the transport-layer state machine that home routers and carrier gateways run. It's the most self-contained of the three projects (no kernel/root complexity, no special hardware), so it's the fastest path to a working demo and builds your C systems credibility before tackling SRv6 and eBPF/XDP.
+
+---
+
+3. USE CASE
+
+- Learning: understand connection tracking, SNAT/DNAT, TCP state machines, port mapping, aging, and fragmentation.
+- Portfolio: a GitHub repo demonstrating C systems programming + Python test harness + networking.
+- Interview talking point: "I built a stateful NAT from scratch — here's the connection table, here's how I handle port collisions, here's how UDP pseudo-connections age, here's how I reassemble fragments across the NAT boundary."
+- Demo: two network namespaces connected by the NAT, ping/tcp through it, verify bidirectional connectivity and port preservation.
+
+---
+
+4. HIGH-LEVEL DESCRIPTION
+
+A userspace NAT that tracks TCP/UDP/ICMP connections, maps private IPs/ports to public ones, and handles the full state machine.
+
+C DATA PLANE:
+- Connection tracking table (hash by original 4-tuple, lookup on reply)
+- SNAT (source NAT) on outbound, DNAT (destination NAT) on inbound
+- TCP state machine (SYN → ESTABLISHED → FIN → TIME_WAIT)
+- UDP pseudo-connection aging
+- ICMP ID tracking
+- IP fragmentation reassembly across NAT boundaries
+- NAT table aging (TIME_WAIT expiry, idle timeout, port exhaustion detection)
+- CLI: show nat, show conn, show stats, flush
+
+PYTHON TEST / CONTROL PLANE:
+- Namespace topology setup (veth pairs + namespaces) or TUN/TAP
+- Traffic generator (send packets through the NAT)
+- Correctness checks (same session returns to same mapped port, bidirectional connectivity preserved, no port collisions)
+- Stats: active connections, bytes translated, translation errors
+- Telemetry: connection count over time, per-rule byte/packet counters, latency percentiles
+
+---
+
+5. TECH STACK
+
+┌────────────────┬───────────────────────────────┬──────────────────────────────────────────────────────────────┐
+│     Layer      │          Technology           │                             Why                              │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Language       │ C                             │ data plane: packet manipulation, hash tables, state machines │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Language       │ Python 3                      │ control plane, test harness, telemetry, CLI client           │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Packet I/O     │ Linux TUN/TAP or raw sockets  │ virtual interfaces for end-to-end testing                    │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Data structure │ Custom hash table             │ connection tracking by 4-tuple                               │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Config         │ YAML (Python)                 │ topology + NAT mapping definitions                           │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Telemetry      │ JSON reports                  │ active connections, bytes, latency percentiles, drops        │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Build          │ Makefile                      │ standard C build                                             │
+├────────────────┼───────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Docs           │ README + architecture diagram │ portfolio artifact                                           │
+└────────────────┴───────────────────────────────┴──────────────────────────────────────────────────────────────┘
+
+---
+
+6. FEATURES
+
+C DATA PLANE
+
+┌─────┬───────────────────────┬──────────────────────────────────────────────────────────────────────────┐
+│ ID  │        Feature        │                               Description                                │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F1  │ Connection tracking   │ Hash by original 4-tuple; lookup on reply; hash chain collision handling │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F2  │ SNAT / DNAT rewrite   │ Source NAT outbound, destination NAT inbound, port mapping               │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F3  │ TCP state machine     │ SYN → ESTABLISHED → FIN → TIME_WAIT, sequence number handling            │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F4  │ UDP pseudo-connection │ Connectionless tracking with aging timeout                               │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F5  │ ICMP ID tracking      │ Map ICMP echo IDs for NAT round-trip                                     │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F6  │ IP fragmentation      │ Reassemble fragments across NAT boundary                                 │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F7  │ NAT table aging       │ TIME_WAIT expiry, idle timeout, port exhaustion detection                │
+├─────┼───────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+│ F8  │ CLI + stats           │ show nat, show conn, show stats, flush                                   │
+└─────┴───────────────────────┴──────────────────────────────────────────────────────────────────────────┘
+
+PYTHON TEST / CONTROL PLANE
+
+┌─────┬────────────────────┬─────────────────────────────────────────────────────────────────────────────────┐
+│ ID  │      Feature       │                                   Description                                   │
+├─────┼────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ F9  │ Test harness       │ Namespace topology, traffic gen, correctness checks                             │
+├─────┼────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ F10 │ Correctness checks │ Same session → same mapped port, bidirectional connectivity, no port collisions │
+├─────┼────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ F11 │ Stats              │ Active connections, bytes translated, translation errors                        │
+├─────┼────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ F12 │ Telemetry          │ Connection count over time, per-rule byte/packet counters, latency percentiles  │
+└─────┴────────────────────┴─────────────────────────────────────────────────────────────────────────────────┘
+
+---
+
+7. BLOCK DIAGRAM
+
+PYTHON TEST / CONTROL
+┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐
+│ nat-topo.yaml│→│ nat_client   │→│ nat_test.py           │
+│ (veth pairs, │  │ (CLI: show,  │  │ (namespace setup,     │
+│  namespaces) │  │  flush, cfg)│  │  traffic gen,         │
+└──────────────┘  └──────┬──────┘  │  correctness checks)  │
+                        │         └───────────┬────────────┘
+                         │ Telemetry (conn count, bytes,
+                         │ latency %iles, drops)
+                         └─────────────────────────────────────┘
+                                  │
+                                  ▼
+C NAT DATA PLANE
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ nat_ct.c     │  │ nat_rewrite.c│  │ nat_state.c  │
+│ conn tracking│  │ SNAT/DNAT    │  │ TCP/UDP/ICMP │
+│ hash table   │  │ port mapping │  │ state mach.  │
+└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+       │                 │                 │
+       └─────────────────┼─────────────────┘
+                         ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ nat_frag.c   │  │ nat_cli.c    │  │ main.c       │
+│ IP frag      │  │ show/flush   │  │ TUN/TAP +    │
+│ reassembly   │  │ stats CLI    │  │ netfilter    │
+└──────────────┘  └──────────────┘  └──────────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │ Connection tracking  │
+              │ table (hash + linked │
+              │ list)                │
+              │ ┌───┐ ┌───┐ ┌───┐    │
+              │ │ A │→│ B │→│ C │... │
+              │ └───┘ └───┘ └───┘    │
+              └──────────────────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │ Packet rewrite path  │
+              │ inbound: DNAT → fwd  │
+              │ outbound: SNAT → fwd │
+              └──────────────────────┘
+
+---
+
+8. INTERACTIONS
+
+1. Python → C (config): nat_client.py pushes NAT mappings (SNAT/DNAT rules, timeouts) to the C engine.
+2. C → C (forwarding): packet arrives → conn tracking lookup → SNAT/DNAT rewrite → forward out interface.
+3. C → Python (telemetry): after each packet, conn counts, bytes, latency counters are collected and reported by the Python harness.
+4. Python → Python (test): nat_test.py sets up namespaces, generates traffic, and asserts correctness (port preservation, bidirectional connectivity, no collisions).
+
+---
+
+9. PROJECT STRUCTURE
+
+nat-engine/
+├── README.md                      # architecture diagram, build, demo
+├── Makefile                       # build C + Python venv
+├── docs/
+│   └── architecture.md            # detailed design
+├── include/
+│   ├── nat_common.h              # IP/UDP/TCP structs, byte order
+│   ├── nat_ct.h                  # conn tracking table
+│   ├── nat_rewrite.h             # SNAT/DNAT
+│   ├── nat_state.h               # TCP/UDP/ICMP state
+│   ├── nat_frag.h                # fragmentation
+│   └── nat_cli.h                 # CLI
+├── src/
+│   ├── nat_ct.c                  # F1: conn tracking hash table
+│   ├── nat_rewrite.c             # F2: SNAT/DNAT port mapping
+│   ├── nat_state.c               # F3+F4+F5: TCP/UDP/ICMP state
+│   ├── nat_frag.c                # F6: fragment reassembly
+│   ├── nat_cli.c                 # F8: show/flush/stats
+│   └── main.c                    # F7: aging + entry point
+├── python/
+│   ├── nat_test.py               # F9: namespace topo + correctness
+│   ├── nat_client.py             # CLI client
+│   └── telemetry.py              # F12: conn/bytes/latency report
+└── configs/
+    └── nat-topo.yaml             # sample: veth pairs, namespaces
+
+---
+
+10. KEY DATA STRUCTURES
+
+struct nat_conn {
+    uint32_t src_ip, dst_ip;       // original
+    uint16_t src_port, dst_port;
+    uint32_t nat_ip;               // mapped public IP
+    uint16_t nat_port;             // mapped port
+    uint8_t  proto;                // 6=TCP, 17=UDP, 1=ICMP
+    uint8_t  state;                // TCP state (0=NEW..4=TIME_WAIT)
+    uint64_t bytes_out, bytes_in;
+    uint64_t last_seen;
+    uint64_t created;
+    struct nat_conn *hnext;        // hash chain
+};
+
+struct nat_table {
+    struct nat_conn **buckets;     // hash table
+    size_t bucket_count;
+    size_t conn_count;
+    uint64_t total_bytes;
+};
+
+---
+
+11. EXAMPLE / DEMO
+
+# Build
+$ make
+$ python -m venv .venv && source .venv/bin/activate
+
+# Start the NAT engine between two namespaces
+$ sudo python nat_test.py --topo configs/nat-topo.yaml
+Setting up namespaces...
+NAT engine started on veth0 <-> veth1
+
+# Inside namespace A: ping through the NAT
+$ ip netns exec ns-a ping 8.8.8.8
+PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.
+64 bytes from 8.8.8.8: icmp_seq=1 ttl=63 time=12.4 ms
+
+# Inside namespace B: tcpdump shows the SNAT rewrite
+$ ip netns exec ns-b tcpdump -i veth1 -n
+12:34:56.789 IP 203.0.113.7:45001 > 8.8.8.8:80  (SNAT applied)
+
+# Show connections
+$ natctl show conn
+  192.168.1.5:49152 → 203.0.113.7:45001  TCP  ESTABLISHED  1.2MB
+  192.168.1.6:53211 → 203.0.113.7:45002  UDP  ACTIVE       45KB
+
+# Show stats
+$ natctl show stats
+  connections=147 | bytes_out=4.2GB | drops=0 | avg_latency=0.8ms
+
+---
+
+12. BUILD PHASES (~3 weeks)
+
+┌──────┬────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────┐
+│ Week │                       Phase                        │                           Deliverable                            │
+├──────┼────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+│ 1    │ Connection tracking table + basic SNAT/DNAT +      │ Working conn tracking, SNAT/DNAT rewrite, natctl show conn       │
+│      │ loopback test                                      │                                                                  │
+├──────┼────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+│ 2    │ TCP state machine + UDP/ICMP aging + fragmentation │ TCP SYN→ESTABLISHED→FIN→TIME_WAIT, UDP aging, ICMP ID mapping,   │
+│      │                                                    │ fragment reassembly                                              │
+├──────┼────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+│ 3    │ Namespace test harness + Python correctness checks │ End-to-end demo, JSON telemetry report, architecture diagram     │
+│      │  + telemetry + README                              │                                                                  │
+└──────┴────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────┘
+
+---
+
+13. ACCEPTANCE CRITERIA
+
+- [ ] make builds cleanly with no warnings (-Wall -Wextra -Werror)
+- [ ] natctl show conn lists active connections with correct mapped ports
+- [ ] A TCP session through the NAT returns to the same mapped port on reply
+- [ ] Bidirectional connectivity is preserved (ping both ways through the NAT)
+- [ ] No port collisions under concurrent sessions
+- [ ] UDP pseudo-connections age out after the idle timeout
+- [ ] TIME_WAIT entries expire and are removed
+- [ ] natctl show stats reports connections, bytes, drops, latency
+- [ ] nat_test.py runs end-to-end and passes correctness checks
+- [ ] README has build instructions, architecture diagram, and a working demo
+
+---
+
+14. NOTES FOR IMPLEMENTATION
+
+- Pure C + Python only. No Go, Java, Rust, or other languages.
+- No special hardware. Needs root/sudo for namespaces/veth (WSL2 Ubuntu 22.04+ works; bare Windows does NOT — use WSL2).
+- Keep the C data plane self-contained and testable in isolation — the conn tracking + rewrite path should work with a simple loopback test before namespaces are added.
+- Telemetry format: JSON, consistent with the other two projects (srv6-engine, xdp-filter) so the portfolio tells one coherent story.
+- Naming conventions: snake_case for C, snake_case for Python, kebab-case for file/directory names.
+- README structure (same in all 3 projects): overview, architecture diagram, features, build instructions, demo, telemetry output.
+- Port allocation strategy: track used ports per NAT IP in a bitmap or linked list; start from 1024; avoid well-known ports.
+- TCP sequence randomization is optional for v1 — note it as a known limitation in the README rather than trying to implement it in the first pass.
+
+---
