@@ -1,4 +1,4 @@
-# nat-engine
+# Nat-engine
 
 A userspace stateful IPv4 Network Address Translation (NAT) engine written in C, paired with a Unix-socket CLI (`natctl`) and a Python test/telemetry harness.
 
